@@ -1,0 +1,784 @@
+﻿/*
+* Spell As You Type jQuery Plugin v1.1.0
+*
+* Copyright (c) 2009 Honda UK (www.honda.co.uk)
+* Written by James Westgate
+*
+* @requires jQuery v1.3.2 or later
+*
+* Dual licensed under the MIT and GPL licenses:
+*   http://www.opensource.org/licenses/mit-license.php
+*   http://www.gnu.org/licenses/gpl.html
+*
+* Dictionary.txt based on the English wordlist created by Kevin Atkinson for Pspell and Aspell
+* licensed under the LGPL license.
+*
+*/
+
+//Create closure
+(function($) {
+
+    //Global values
+    global = {
+        dictionaryArray: new Array(26), //Dictionary, parsed into array by 1st letter, length
+        words: new Array(),             //Hold a list of words that have been queued to become suggestions
+        suggestions: new Object(),      //List of words that have been checked
+        ready: false,                   //dictionary ready flag
+        loading: false,                 //dictionary load in progress
+        changed: false,                 //text has changed since last word break
+        options: null,                  //options passed into the plugin
+        wordQueue: new Array(),         //word breaking queue
+        wordTimer: 0,                   //word breaking queue timer
+        highlight: 0,                   //highlight timer
+        breakTimer: 0,                  //restart word breaking timer
+        current: null,                  //input with focus
+        suggestQueue: new Array(),      //suggestion finding queue
+        suggestTimer: 0                 //suggestion queue timer
+    };
+
+    //Plugin definition
+    $.fn.extend({
+
+        spellayt: function(options) {
+
+            //This plugin is only required for IE 6.0+ users.
+            if (!$.browser.msie) return;
+            if ($.browser.version < 6) return;
+
+            //Combine options passed with our defaults
+            global.options = $.extend({}, $.fn.spellayt.defaults, options);
+
+            //Load the dictionary from a url
+            if (!global.ready && !global.loading) {
+
+                global.loading = true;
+                $.ajax({
+                    type: "GET",
+                    url: global.options.url,
+                    dataType: "text",
+                    success: function(data) {
+
+                        //Load the dictionary into the dictionaryArray. It is best to cache this on the client.
+                        loadDictionary(data);
+                        global.ready = true;
+                        if ($.fn.spellayt.loaded != null) $.fn.spellayt.loaded();
+                        global.loading = false;
+
+                        //Start checking
+                        $.fn.spellayt.startCheck();
+                    },
+                    error: function(XMLHttpRequest, textStatus, errorThrown) {
+                        if ($.fn.spellayt.loadError != null) $.fn.spellayt.loadError(textStatus);
+                        global.loading = false;
+                    }
+                });
+            }
+
+            //Bind to the window scroll to remove highlights
+            $(window).scroll(function(event) {
+                $('.spellayt').remove();
+            });
+
+            //Bind to the window resize to remove highlights
+            $(window).bind('resize', function() {
+                $('.spellayt').remove();
+            });
+
+            //Insert a hidden div to fix any absolute position problems with underline divs
+            $("<div style='position:absolute;top:0;left:-10;width:1;height:1'></div>").appendTo(document.body).show();
+
+            //Loop through each item in the matched set and apply event handlers
+            return this.each(function(i) {
+
+                //When the input gains focus, set it as the current input and start the timers
+                $(this).focus(function(event) {
+
+                    global.current = this;
+                    if (global.ready) $.fn.spellayt.startCheck();
+                });
+
+                //When the input looses focus, remove menu and highlight and cancel the timers
+                $(this).blur(function(event) {
+
+                    if (global.ready) $.fn.spellayt.stopCheck();
+                    //global.current = null; - menu selection causes blur
+                });
+
+                //Remove our context menu on mouse down
+                $(this).mousedown(function(event) {
+                    $('.spellaytDiv').remove();
+                });
+
+                //Bind to the input scroll to remove highlights
+                $(this).scroll(function(event) {
+                    $('.spellayt').remove();
+                });
+
+                //Perform functions on key down
+                $(this).keydown(function(e) {
+                    $.fn.spellayt.highlight(global.current); //Rehighlight
+                    if (e.keyCode == 27) {  //Escape
+                        $('.spellaytDiv').remove();
+                    }
+                    global.changed = true;
+                });
+
+                //Bind to the browser contextmenu event
+                $(this).bind("contextmenu", function() {
+
+                    //Show the normal context menu if suggestions are not shown
+                    return !showSuggestions(this);
+                });
+            });
+        }
+    });
+
+    //plugin defaults - added as a property on our plugin function
+    $.fn.spellayt.defaults = {
+        url: "dictionary.txt",          //Default url of dictionary
+        matchSentence: /[^.!?]+/g,      //Regex to split text into sentences
+        matchWord: /[a-zA-Z0-9_]+/g,    //Regex to split sentences into words
+        maximum: 12,                    //Maximum no of suggestions to display
+        milliseconds: 50,               //No of milliseconds between work items in the work queue
+        resources: { ignore: "Ignore All", nosuggest: "No Suggestions" }
+    };
+
+    //Provide a function to clear any onscreen artifacts for all matched elements
+    $.fn.spellayt.clear = function() {
+        $('.spellayt').remove();
+    };
+
+    //Start spell checking
+    $.fn.spellayt.startCheck = function() {
+
+        if (global.current != null) {
+
+            //Set a timer to break words every 1/2 second, if the word breaking queue is empty
+            global.breakTimer = setInterval(function() { if (global.wordQueue.length == 0) breakText(global.current); }, 500);
+
+            //Set a timer to highlight words every 1/2 second
+            global.highlight = setInterval(function() { $.fn.spellayt.highlight(global.current); }, 500);
+
+            //Start the the word breaking queue
+            doWordBreak();
+        }
+    };
+
+    //Stop spell checking
+    $.fn.spellayt.stopCheck = function() {
+        $('.spellaytDiv').remove();
+        $('.spellayt').remove();
+
+        //Cancel timers
+        clearTimeout(global.wordTimer);
+        clearInterval(global.highlight);
+        clearInterval(global.breakTimer);
+    };
+
+    //Callback when the dictionary is loaded
+    $.fn.spellayt.loaded = null;
+
+    //Callback when the dictionary load fails
+    $.fn.spellayt.loadError = null;
+
+    //Returns the ready status
+    $.fn.spellayt.ready = function() {
+        return global.ready;
+    };
+
+    //Synchronously check the spelling for all words in the input provided
+    $.fn.spellayt.checkSpelling = function(input) {
+        if (input == null) return false;
+        if (!global.ready) return false;
+
+        //Cancel any timers
+        clearTimeout(global.wordTimer);
+        clearInterval(global.highlight);
+        clearInterval(global.breakTimer);
+
+        //Fills the word queue with checkSentence functions,checkWord functions and lookupWord functions
+        global.changed = false;
+        breakText(input);
+
+        //Processes an item off the queue until empty
+        while (global.wordQueue.length > 0) {
+            doWordBreak();
+        }
+
+        //Highlight the misspellt words
+        $.fn.spellayt.highlight(input);
+
+        return true;
+    };
+
+    //Highlight suggestions in the input provided
+    $.fn.spellayt.highlight = function(input) {
+        if (input == null) return;
+
+        //Remove all previous underlines
+        $.fn.spellayt.clear();
+
+        //Loop through the suggestions and underline the misspellt words
+        var wholeWordsOnly = 2;
+        var suggestions = global.suggestions
+
+        var scrolltop = $(window).scrollTop();
+        var scrollleft = $(window).scrollLeft();
+        var inputscroll = $(input).scrollTop();
+        var inputscrollleft = $(input).scrollLeft();
+        var pos = $(input).offset();
+        var inputright = pos.left + $(input).width();
+        var inputbottom = pos.top + $(input).height(); //Gets bottom of the scrollable area
+
+        for (var de in suggestions) {
+            var suggest = suggestions[de];
+
+            if (!suggest.match && !suggest.ignore) {
+                var wholerange = input.createTextRange();
+                var range = wholerange.duplicate();
+
+                while (range.findText(suggest.term, 0, wholeWordsOnly)) {
+
+                    //Place an absolute positioned div over the word with a squiggly line
+                    var x = range.boundingLeft - 1 + scrollleft + inputscrollleft;
+                    var y = range.boundingTop + range.boundingHeight - 4 + scrolltop + inputscroll;
+
+                    //Stop highlighting if overflow
+                    if (y + 3 > inputbottom) break;
+
+                    //Highlight if scroll visible
+                    if (y > pos.top && x > pos.left && (x + range.boundingWidth < inputright)) {
+
+                        //Append the div to the document body
+                        $("<div id='divWord' class='spellayt' style='" + "top:" + y + "px;left:" + x + "px;width:" + range.boundingWidth + "px;height:3px" + "'></div>").appendTo(document.body).show();
+                    }
+
+                    //Move range to end of word, then reexpand to end of text
+                    range.move("word"); //Move to end of the word found
+                    range.setEndPoint("EndToEnd", wholerange);
+                }
+            }
+        }
+    };
+
+    //Replace the word under the caret with the word provided
+    $.fn.spellayt.replace = function(value) {
+        var caret = getCurrentWord();
+
+        if (caret != null) {
+
+            //Use the text range to replace the word
+            //by default the range expand method includes a space delimiter when a space has been used
+            if (caret.text.indexOf(" ") != -1) value += ' ';
+            caret.text = value;
+
+            //Refocus and highlight as we've lost focus during the click
+            refocus();
+
+            return true;
+        }
+
+        return false;
+    };
+
+    //Ignores all instances of the word under the caret
+    $.fn.spellayt.ignore = function() {
+        var caret = getCurrentWord();
+
+        if (caret != null) {
+
+            //Get the word under the caret
+            var word = $.trim(caret.text);
+
+            //Find the suggestion for this word
+            var suggest = global.suggestions[word];
+
+            if (suggest != null) {
+                suggest.ignore = true;
+
+                //Refocus after clicking on the div
+                refocus();
+                return true;
+            }
+        }
+        return false;
+    };
+
+    //Breaks the text up so that it can be spell checked
+    function breakText(input) {
+        if (input == null) return;
+
+        //Process all sentences if the text hasnt changed since last word break.
+        if (!global.changed) {
+
+            //Get an array of sentences and put them on the work queue
+            var sentences = splitSentences(input.value);
+            if (sentences == null) return;
+
+            //Add the call to checkSentence() to the work queue for each word in each sentence
+            for (var i = 0; i < sentences.length; i++) {
+                global.wordQueue.push({ call: function(parm) { checkSentence(parm); }, data: sentences[i] });
+            }
+        }
+        //Otherwise just process sentence under current cursor
+        else {
+            var sentence = getCurrentSentence();
+            global.wordQueue.push({ call: function(parm) { checkSentence(parm); }, data: sentence });
+        }
+
+        global.changed = false;
+    }
+
+    //Load dictionary data into 3d array
+    function loadDictionary(data) {
+
+        //Initialise each of the 26 alpha arrays with 13 length arrays, containing arrays of words
+        for (var i = 0; i < 26; i++) {
+            global.dictionaryArray[i] = new Array(13);
+
+            for (var i2 = 0; i2 < 13; i2++) {
+                global.dictionaryArray[i][i2] = new Array();
+            }
+        }
+
+        var position = data.indexOf("\r\n");
+        var lastPosition = 0;
+
+        //Load the arrays from the data retrieved
+        while (position > -1) {
+
+            var word = data.substring(lastPosition, position);
+            var chr = word.charCodeAt(0);
+            var len = word.length;
+
+            if (!isNaN(chr)) {
+
+                //Words with length > 13 go into array 13
+                if (len > 13) len = 13;
+
+                //Convert to upper case and reduce to zero index
+                if (chr > 96 && chr < 123) chr -= 32;
+                chr -= 65;
+
+                if (chr >= 0 && chr <= 25) global.dictionaryArray[chr][len - 1].push(word);
+            }
+
+            lastPosition = position + 2;
+            position = data.indexOf("\r\n", lastPosition);
+        }
+
+        //Clear the data retrieved
+        data = null;
+    }
+
+    //Pops the next word (or sentence) off the word breaking queue 
+    function doWordBreak() {
+
+        //Get an item off the queue
+        if (global.wordQueue.length > 0) {
+            var work = global.wordQueue.shift();
+            work.call(work.data);
+        }
+
+        //Process the next item in x ms time
+        ; global.wordTimer = setTimeout(function() { doWordBreak(); }, global.options.milliseconds);
+    }
+
+    //Pops the next word off the suggestion matching queue 
+    function doSuggestionWork() {
+
+        //Get an item off the queue
+        if (global.suggestQueue.length > 0) {
+            var work = global.suggestQueue.shift();
+            work.call(work.data);
+        }
+
+        //Process the next item
+        global.suggestTimer = setTimeout(function() { doSuggestionWork(); }, 10);
+    }
+
+    //Loop through the sentence provided and push each word onto the word breaking queue
+    function checkSentence(data) {
+
+        //Get the array of words making up the sentence
+        var sentence = data;
+
+        //Break the sentence into words
+        var words = sentence.match(global.options.matchWord);
+        if (words == null) return
+
+        //Loop through all words
+        for (var i = 0; i < words.length; i++) {
+
+            //Have to push duplicate words onto the queue, lookup here is too slow
+            global.wordQueue.push({ call: function(parm) { checkWord(parm); }, data: words[i] });
+        }
+    }
+
+    //Check that the word can be processed as a suggestion and place the suggestion onto the work queue
+    function checkWord(data) {
+
+        var word = data;
+
+        //Check if this word has already been processed
+        if (global.words[word] != null) return;
+        global.words[word] = true;
+
+        var chr = getWordIndex(word);
+
+        //Ignore words that dont start with an alpha
+        if (chr < 0 || chr > 25) return;
+
+        //Ignore all capitals eg acronyms
+        if (word.toUpperCase() == word) return;
+
+        //Set up new suggestion object
+        var suggest = {
+            term: word,
+            index: chr,
+            alts: null,
+            match: false,
+            ignore: false,
+            ready: false
+        };
+
+        //Add the word to the queue for processing
+        global.wordQueue.push({ call: function(parm) { lookupWord(parm); }, data: { suggest: suggest, word: word} });
+    }
+
+    //Looks up a word to see if it exists in the dictionary
+    function lookupWord(data) {
+
+        var suggest = data.suggest;
+        var word = data.word;
+
+        var length = word.length;
+        if (length > 13) length = 13;
+        suggest.match = ($.inArray(word, global.dictionaryArray[suggest.index][length - 1]) > -1);
+
+        //If there is not a match, try other combinations
+        if (!suggest.match) {
+
+            //Do another lookup if not matched
+            var chr = word.charCodeAt(0);
+
+            //If the first letter is a capital, make word lower case and put it back on the queue
+            if (chr > 64 && chr < 91) {
+
+                //Add lower case version back onto the queue
+                global.wordQueue.push({ call: function(parm) { lookupWord(parm); }, data: { suggest: suggest, word: word.toLowerCase()} });
+                return;
+            }
+        }
+
+        //Add this suggestion to the list of suggestions. Make sure to use the original term.
+        global.suggestions[suggest.term] = suggest;
+    }
+
+    //Processes a suggest object
+    function getSuggestion(suggest, input) {
+
+        //Set up an array for each alt
+        suggest.alts = new Array();
+        for (var i = 0; i <= 4; i++) suggest.alts[i] = new Array();
+
+        var array = global.dictionaryArray[suggest.index];
+        var word = suggest.term;
+        var wordlength = word.length - 1;
+        if (wordlength > 12) wordlength = 12;
+
+        //If the length is two, check for a direct match with the words swapped and add as a suggestion
+        if (wordlength == 1) {
+            var altword = (word.charAt(1) + word.charAt(0)).toLowerCase();
+            var altarray = global.dictionaryArray[getWordIndex(altword)];
+            if ($.inArray(altword, altarray[1]) > -1) suggest.alts[0].push(altword);
+        }
+
+        //If length > 2 then check words starting with other letter of the alphabet as a direct match
+        if (wordlength > 1) {
+            var isProper = (word.charCodeAt(0) >= 65 && word.charCodeAt(0) <= 91);
+            var index = getWordIndex(word);
+
+            //Loop through each letter 
+            for (var i = 0; i < 26; i++) {
+
+                //Only process other letters of the alphabet
+                if (i != index) {
+                    var altword = (isProper) ? String.fromCharCode(65 + i) + word.substr(1) : String.fromCharCode(97 + i) + word.substr(1);
+                    var altarray = global.dictionaryArray[i];
+                    if ($.inArray(altword, altarray[wordlength]) > -1) suggest.alts[1].push(altword); //ld is 1
+
+                    var altword = (!isProper) ? String.fromCharCode(65 + i) + word.substr(1) : String.fromCharCode(97 + i) + word.substr(1);
+                    if ($.inArray(altword, altarray[wordlength]) > -1) suggest.alts[2].push(altword); //ld is now 2
+                }
+            }
+        }
+
+        //Push suggestion processing onto a queue to avoid script timeout errors
+        global.suggestQueue.push({ call: function(parm) { getSuggestionArray(parm); }, data: { word: word, array: array[wordlength], suggest: suggest} });
+
+        //Words of length plus one
+        if (wordlength < 12) global.suggestQueue.push({ call: function(parm) { getSuggestionArray(parm); }, data: { word: word, array: array[wordlength + 1], suggest: suggest} });
+
+        //Words of length minus one
+        if (wordlength > 0) global.suggestQueue.push({ call: function(parm) { getSuggestionArray(parm); }, data: { word: word, array: array[wordlength - 1], suggest: suggest} });
+
+        //Words of length plus two
+        if (wordlength < 11) global.suggestQueue.push({ call: function(parm) { getSuggestionArray(parm); }, data: { word: word, array: array[wordlength + 2], suggest: suggest} });
+
+        global.suggestQueue.push({ call: function(parm) { completeSuggestion(parm); }, data: { suggest: suggest, input: input} });
+
+        //Start the suggestion queue by calling the first item
+        doSuggestionWork();
+    }
+
+    //Loop through words in each length array populating a suggest object.
+    //Use the LevenshteinDistance algorithm to determine how similar words are 
+    //Keep words with lev distances of 3 or lower
+    function getSuggestionArray(parms) {
+
+        var word = parms.word;
+        var array = parms.array;
+        var suggest = parms.suggest;
+
+        //Loop through the array of words and get more suggestions
+        for (var i = 0; i < array.length; i++) {
+
+            var dicword = array[i];
+            var ld = levenshteinDistance(word, dicword);
+
+            //Matches on modified words may produce a direct match
+            if (ld == 0) {
+                suggest.alts[0].push(dicword);
+            }
+            else {
+                //Push items depending on their length compared to their ld
+                var factor = Math.floor(word.length / 2);
+                if (factor <= 0) factor = 1;
+                if (factor > 4) factor = 4;
+                if (factor >= ld) suggest.alts[ld].push(dicword);
+            }
+        }
+    }
+
+    //Helper queue function to set a suggestion as ready
+    function completeSuggestion(parms) {
+        parms.suggest.ready = true;
+        clearTimeout(global.suggestTimer);
+
+        //Recall the function to show the suggestions
+        showSuggestions(parms.input)
+    }
+
+    //Shows the suggestions for an input
+    function showSuggestions(input) {
+        var caret = getCurrentWord();
+
+        if (caret != null) {
+
+            var x = caret.boundingLeft + $(window).scrollLeft() + $(input).scrollLeft();
+            var y = caret.boundingTop + (caret.boundingHeight / 2) + $(window).scrollTop() + $(input).scrollTop();
+
+            //Place an absolute positioned div over the word to look like a menu
+            var style = "top:" + y + "px;left:" + x + "px;height:auto";
+
+            //Get the word under the caret
+            var word = $.trim(caret.text);
+
+            //Find the suggestion for this word
+            var suggest = global.suggestions[word];
+
+            if (suggest != null && !suggest.match && !suggest.ignore) {
+
+                var isProper = (word.charCodeAt(0) >= 65 && word.charCodeAt(0) <= 91);
+
+                //Cancel timers
+                clearTimeout(global.wordTimer);
+                clearInterval(global.highlight);
+                clearInterval(global.breakTimer);
+
+                //Lookup suggestions if required
+                if (!suggest.ready) {
+                    getSuggestion(suggest, input);
+                    return true; //this function will be recalled once suggestions are loaded
+                }
+
+                //Append the div to the document body
+                var menuHtml = "<div id='divSuggest' class='spellaytDiv' style='" + style + "'></div>";
+                var menu = $(menuHtml).appendTo(document.body);
+
+                var count = 0;
+                for (var i = 0; i < suggest.alts.length; i++) {
+
+                    //Check if we have hit the maximum, otherwise ignore the options
+                    if (i < 2 || count + suggest.alts[i].length <= global.options.maximum) {
+
+                        for (var i2 = 0; i2 < suggest.alts[i].length; i2++) {
+
+                            var sel = suggest.alts[i][i2].replace("'", "&#39;");
+
+                            //Convert to upper if originally in upper
+                            if (isProper) sel = sel.charAt(0).toUpperCase() + sel.substr(1);
+
+                            menu.append("<a class='spellaytMenuItem' href='#' onmousedown='jQuery.fn.spellayt.replace(\"" + sel + "\");return false;'>" + sel + "</a>");
+                            count++;
+                        }
+                    }
+                }
+
+                if (count == 0) menu.append("<a class='spellaytMenuItem' href='#' onmousedown='jQuery.fn.spellayt.ignore();return false;'>(" + global.options.resources.nosuggest + ")</a>");
+
+                //Seperator line and Ignore
+                menu.append("<div class='spellaytMenuSep'><span style='height:1px'/></div>");
+                menu.append("<a class='spellaytMenuItem' href='#' onmousedown='jQuery.fn.spellayt.ignore();return false;'>" + global.options.resources.ignore + "</a>");
+
+                //If using IE6, then place an iframe underneath the menu to avoid the select zorder problem
+                if ($.browser.msie && $.browser.version == 6) {
+
+                    // Updated to use the bgiframe plug-in, if present
+                    if ($.fn.bgiframe) menu.bgiframe();
+                }
+
+                menu.show();
+
+                return true;
+            }
+        }
+        return false;
+    }
+
+    //Returns an array of sentences
+    function splitSentences(text) {
+
+        //Split into sentences by using the supplied regex
+        var sentences = text.match(global.options.matchSentence); //Any character that delimits a sentence
+        var result = new Array();
+
+        if (sentences == null) return;
+
+        //Loop through each sentence and split into words
+        for (var i = 0; i < sentences.length; i++) {
+            var sentence = sentences[i];
+
+            if (sentence != null) {
+                sentence = $.trim(sentence);
+                result.push(sentence);
+            }
+        }
+
+        return result;
+    }
+
+    //Refocus to the current textbox and highlight in 100 ms.
+    function refocus() {
+        setTimeout(function() { global.current.focus(); $.fn.spellayt.highlight(global.current); }, 200);
+    }
+
+    //http://www.merriampark.com/ld.htm, http://www.mgilleland.com/ld/ldjavascript.htm, Damerau–Levenshtein distance (Wikipedia)
+    function levenshteinDistance(s, t) {
+        var d = new Array(); //2d matrix
+
+        // Step 1
+        var n = s.length;
+        var m = t.length;
+
+        if (n == 0) return m;
+        if (m == 0) return n;
+
+        // Create an array of arrays in javascript
+        for (var i = 0; i <= n; i++) d[i] = new Array();
+
+        // Step 2
+        for (var i = 0; i <= n; i++) d[i][0] = i;
+        for (var j = 0; j <= m; j++) d[0][j] = j;
+
+        // Step 3
+        for (var i = 1; i <= n; i++) {
+            var s_i = s.charAt(i - 1);
+
+            // Step 4
+            for (var j = 1; j <= m; j++) {
+
+                //Check the jagged ld total so far
+                if (i == j && d[i][j] > 4) return n;
+
+                var t_j = t.charAt(j - 1);
+                var cost = (s_i == t_j) ? 0 : 1; // Step 5
+
+                //Calculate the minimum
+                var mi = d[i - 1][j] + 1;
+                var b = d[i][j - 1] + 1;
+                var c = d[i - 1][j - 1] + cost;
+
+                if (b < mi) mi = b;
+                if (c < mi) mi = c;
+
+                d[i][j] = mi; // Step 6
+
+                //Damerau transposition
+                if (i > 1 && j > 1 && s_i == t.charAt(j - 2) && s.charAt(i - 2) == t_j) {
+                    d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + cost);
+                }
+            }
+        }
+
+        // Step 7
+        return d[n][m];
+    }
+
+    function getWordIndex(word) {
+        var chr = word.charCodeAt(0);
+
+        //Work out the main array based on the first char
+        //Convert to upper case and reduce to zero
+        if (chr > 96 && chr < 123) chr -= 32;
+        chr -= 65;
+
+        return chr;
+    }
+
+    //Expands a selection to get the current sentence text
+    function getCurrentSentence() {
+
+        caret = document.selection.createRange();
+        if (!caret.expand("sentence")) return "";
+        return caret.text;
+    }
+
+    //Expands a selection to encompass the word
+    function getCurrentWord() {
+
+        //Try word expansion
+        caret = document.selection.createRange();
+        if (!caret.expand("word")) return null;
+        if (caret.text.length > 0) return caret;
+
+        //Use character expansion. 
+        //Relies on the fact that the html and text change when outside the range of the input
+        caret = document.selection.createRange();
+
+        var i = -1;
+        var dup = caret.duplicate();
+
+        //Move to start
+        while (i < 0 && dup.text == dup.htmlText) {
+            i = caret.moveStart("character", -1);
+            dup = caret.duplicate();
+            dup.expand("word");
+        }
+
+        //Move back one char to the right
+        if (caret.text.length > 1) caret.moveStart("character", 1);
+        i = 1;
+
+        //Move to end
+        while (i > 0 && caret.text == caret.htmlText) {
+            dup = caret.duplicate();
+            i = caret.moveEnd("character", 1);
+        }
+
+        return dup;
+    }
+
+    // end of closure
+})(jQuery);

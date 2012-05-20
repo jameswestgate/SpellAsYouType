@@ -1,0 +1,15 @@
+/* Misspellt underline div */
+div.spellayt {position:absolute; z-index:96; background:url(Images/spellayt.gif) repeat-x; margin: 0px; padding: 0px}
+
+/* -- Context Menu --*/
+
+/* Context menu main div*/
+.spellaytDiv  {position:absolute; background-color:#fff; border-color:#aaa; border-width:1px; border-style:solid; width:auto; padding:4px 4px 4px 4px; z-index:97}
+
+/* Context menu seperator */
+.spellaytMenuSep {height:1px; background-color:#aaa; margin-top:4px; margin-bottom:4px; width:170px}
+
+/* Context menu item container */
+a.spellaytMenuItem {display:block; color:#000; text-decoration:none; font-family:Verdana; font-size:8pt; text-align:left; padding-left:16px; padding-top:2px; padding-bottom:3px}
+a.spellaytMenuItem:hover {color:#fff;background-color:#316ac5;}
+
