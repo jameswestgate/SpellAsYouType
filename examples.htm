@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+	<title>Spell as you Type plug-in : Examples</title>
+	<link href="Styles/static.css" type="text/css" rel="Stylesheet" />
+	
+</head>
+<body>
+    
+    <div id="example1">
+        <h2>Example 1</h2>
+
+        <p>Spell checking of a textarea element with default options and dictionary.</p>
+        <pre>$('#txtTextarea').spellayt();</pre>
+        <a href="example1.htm" target="_blank">View example</a>
+    </div>
+
+    <div>
+        <h2>Example 2</h2>
+
+        <p>Spell checking of a textarea element with a UK English dictionary.</p>
+        <pre>$('#txtTextarea').spellayt({url: "dictionary.enGB.txt"});</pre>
+
+        <a href="example2.htm" target="_blank">View example</a>
+    </div>	
+
+   <div>
+        <h2>Example 3</h2>
+
+        <p>Spell checking with dictionary loaded callback notification and synchronous spell checking.</p>
+        <pre>//Event callbacks
+$.fn.spellayt.loadError = function(textStatus) { alert("An error occurred loading the dictionary."); };
+$.fn.spellayt.loaded = function() { $('#para').text("Dictionary loaded.") };
+
+//Check spelling link
+$('a#check').click(function() {
+	           
+    //Run synchronous spell checking
+    $('#txtTextarea').spellcheck();
+
+    return false;
+});
+
+//Set up spell checking as you type	        
+$('#txtTextarea').spellayt({ url: "dictionary.enGB.txt" });</pre>
+
+        <a href="example3.htm" target="_blank">View example</a>
+    </div>	
+    
+       <div>
+        <h2>Example 4</h2>
+
+        <p>Spell checking multiple textboxes and custom underline offset.</p>
+        <pre>$('#Text1').spellayt({ offset: { left: 0, top: -5} });
+$('#Text2').spellayt({ offset: { left: 0, top: -7} });
+$('#Text3').spellayt({ offset: { left: 0, top: -3} });</pre>
+
+        <a href="example4.htm" target="_blank">View example</a>
+    </div>
+	
+</body>
+</html>

@@ -1,0 +1,8 @@
+﻿body {font-family:Verdana, Arial}
+h2 {margin-top:30px}
+pre {border: solid 1px #c0c0c0; padding:8px; width:960px;background-color:#fafafa}
+label {display:inline-block; width:100px}
+iframe {width:600px;height:200px}
+textarea {width:550px}
+
+td.numeric {text-align:right;}

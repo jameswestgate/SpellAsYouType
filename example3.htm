@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+	<title>Spell as you Type plug-in: Example 3</title>
+	
+	<link href="Styles/static.css" type="text/css" rel="Stylesheet" />
+	<link href="Styles/jquery.spellayt.css" type="text/css" rel="Stylesheet" />
+	
+	<script type="text/javascript" src="Scripts/jquery-1.3.2.min.js"></script>
+	<script type="text/javascript" src="Scripts/jquery.spellayt.min.js"></script>
+		
+	<script type="text/javascript">
+	    
+	    $(document).ready(function() {
+
+	        //Event callbacks
+	        $.fn.spellayt.loadError = function(textStatus) { alert("An error occurred loading the dictionary."); };
+	        $.fn.spellayt.loaded = function() { $('#para').text("Dictionary loaded.") };
+
+	        //Check spelling link
+	        $('a#check').click(function() {
+	            if (!$.fn.spellayt.ready) {
+	                alert("Spell checking not available, please wait for the dictionary to load.");
+	                return false;
+	            }
+
+	            //Run synchronous spell checking
+	            $('#txtTextarea').spellcheck();
+
+	            return false;
+	        });
+
+	        //Set up spell checking as you type	        
+	        $('#txtTextarea').spellayt({ url: "dictionary.enGB.txt" });
+	    });
+	    
+	</script>
+	
+</head>
+<body>
+    <div>
+        <p id="para" style="margin-bottom:16px">Dictionary loading .... </p>
+        <textarea id="txtTextarea" cols="80" rows="6" style="font-family:Arial;font-size:10pt">The qiuck brown fex jumped over the lazy dog. Click on the link below to perofrm a spell check.</textarea>
+        <p>
+            <a href="#" id="check">Check Spelling</a>
+        </p>
+    </div>
+</body>
+</html>

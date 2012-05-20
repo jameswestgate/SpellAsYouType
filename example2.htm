@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+	<title>Spell as you Type plug-in: Example 2</title>
+	
+	<link href="Styles/static.css" type="text/css" rel="Stylesheet" />
+	<link href="Styles/jquery.spellayt.css" type="text/css" rel="Stylesheet" />
+	
+	<script type="text/javascript" src="Scripts/jquery-1.3.2.min.js"></script>
+	<script type="text/javascript" src="Scripts/jquery.spellayt.min.js"></script>
+		
+	<script type="text/javascript">
+	    
+	    $(document).ready(function() {
+	        $('#txtTextarea').spellayt({ url: "dictionary.enGB.txt" });
+	    });
+	    
+	</script>
+	
+</head>
+<body>
+    <div>
+        <textarea id="txtTextarea" cols="80" rows="6" style="font-family:Arial;font-size:10pt">Rainbows have lots of pretty colors.</textarea>
+    </div>
+</body>
+</html>
